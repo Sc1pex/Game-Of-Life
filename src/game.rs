@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
+use wgpu::util::DeviceExt;
 use winit::{event::WindowEvent, window::Window};
+
+use crate::cell::Cell;
 
 pub struct Game {
     surface: wgpu::Surface,
@@ -9,7 +12,20 @@ pub struct Game {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
 
-    _render_pipeline: wgpu::RenderPipeline,
+    cells: Vec<Cell>,
+    cell_size: u32,
+    num_cells_x: u32,
+    num_cells_y: u32,
+
+    pv_mat: glam::Mat4,
+    pv_mat_bind_group: wgpu::BindGroup,
+
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    state_buffer: wgpu::Buffer,
+    model_mats_buffer: wgpu::Buffer,
+
+    render_pipeline: wgpu::RenderPipeline,
 }
 
 impl Game {
@@ -49,6 +65,91 @@ impl Game {
         };
         surface.configure(&device, &config);
 
+        let num_cells_x = 100;
+        let (num_cells_y, cell_size) = Self::calculate_cells(num_cells_x, &size);
+        let mut count = 0;
+        let cells = (0..num_cells_y)
+            .into_iter()
+            .flat_map(|y| {
+                count += 1;
+                (0..num_cells_x).into_iter().map(move |x| {
+                    count += 1;
+                    Cell {
+                        position: glam::vec2((x * cell_size) as f32, (y * cell_size) as f32),
+                        state: (count % 2) == 1,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let model_matricies_data = cells
+            .iter()
+            .map(|cell| cell.model_matrix(cell_size as f32))
+            .collect::<Vec<_>>();
+        let model_mats_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&model_matricies_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let state_data = cells
+            .iter()
+            .map(|cell| cell.state as u32 as f32)
+            .collect::<Vec<_>>();
+        let state_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&state_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let pv_mat = glam::Mat4::orthographic_rh(
+            0.0,
+            size.width as f32,
+            size.height as f32,
+            0.0,
+            0.0,
+            100.0,
+        );
+        let pv_mat_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&(pv_mat.to_cols_array_2d())),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let pv_mat_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    count: None,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                }],
+            });
+        let pv_mat_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pv_mat_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: pv_mat_buffer.as_entire_binding(),
+            }],
+        });
+
+        let vertex_data: Vec<f32> = vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
+        let index_data: Vec<u16> = vec![0, 1, 2, 2, 1, 3];
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&vertex_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&index_data),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
@@ -56,7 +157,7 @@ impl Game {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&pv_mat_bind_group_layout],
                 push_constant_ranges: &[],
             });
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -65,7 +166,7 @@ impl Game {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[],
+                buffers: &[Cell::vertex_desc(), Cell::matrix_desc(), Cell::state_desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -73,7 +174,7 @@ impl Game {
                 targets: &[config.format.into()],
             }),
             primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 ..Default::default()
             },
             depth_stencil: None,
@@ -87,7 +188,21 @@ impl Game {
             queue,
             config,
             size,
-            _render_pipeline: render_pipeline,
+
+            cells,
+            num_cells_x,
+            num_cells_y,
+            cell_size,
+
+            pv_mat,
+            pv_mat_bind_group,
+
+            vertex_buffer,
+            index_buffer,
+            state_buffer,
+            model_mats_buffer,
+
+            render_pipeline,
         }
     }
 
@@ -117,7 +232,7 @@ impl Game {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -129,6 +244,13 @@ impl Game {
                 }],
                 depth_stencil_attachment: None,
             });
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.pv_mat_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.model_mats_buffer.slice(..));
+            render_pass.set_vertex_buffer(2, self.state_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..6, 0, 0..self.cells.len() as u32);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -140,5 +262,11 @@ impl Game {
         self.config.width = self.size.width;
         self.config.height = self.size.height;
         self.surface.configure(&self.device, &self.config);
+    }
+
+    fn calculate_cells(num_cells_x: u32, size: &winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
+        let cell_size = size.width / num_cells_x;
+        let num_cells_y = size.height / cell_size;
+        (num_cells_y, cell_size)
     }
 }

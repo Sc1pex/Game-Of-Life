@@ -6,6 +6,7 @@ use winit::{
     window::WindowBuilder,
 };
 
+mod cell;
 mod game;
 
 #[async_std::main]

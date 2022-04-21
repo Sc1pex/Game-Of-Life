@@ -10,3 +10,4 @@ log = "0.4"
 wgpu = "0.12"
 async-std = {version = "1.11.0", features = ["attributes"]}
 bytemuck = { version = "1.9.1", features = [ "derive" ] }
+glam = "0.20.5"
