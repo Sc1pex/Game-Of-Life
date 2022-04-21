@@ -1,0 +1,12 @@
+[package]
+name = "game_of_life"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+winit = "0.26"
+env_logger = "0.9"
+log = "0.4"
+wgpu = "0.12"
+async-std = {version = "1.11.0", features = ["attributes"]}
+bytemuck = { version = "1.9.1", features = [ "derive" ] }
