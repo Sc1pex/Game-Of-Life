@@ -65,7 +65,7 @@ impl Game {
         };
         surface.configure(&device, &config);
 
-        let num_cells_x = 100;
+        let num_cells_x = 80;
         let (num_cells_y, cell_size) = Self::calculate_cells(num_cells_x, &size);
         let mut count = 0;
         let cells = (0..num_cells_y)
@@ -265,8 +265,8 @@ impl Game {
     }
 
     fn calculate_cells(num_cells_x: u32, size: &winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
-        let cell_size = size.width / num_cells_x;
-        let num_cells_y = size.height / cell_size;
-        (num_cells_y, cell_size)
+        let cell_size = size.width as f32 / num_cells_x as f32;
+        let num_cells_y = size.height as f32 / cell_size;
+        (num_cells_y.ceil() as u32, cell_size.ceil() as u32)
     }
 }

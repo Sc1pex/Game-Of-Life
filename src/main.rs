@@ -1,9 +1,9 @@
 use game::Game;
 use winit::{
-    dpi::PhysicalSize,
+    dpi::{PhysicalPosition, PhysicalSize},
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    window::{Fullscreen, WindowBuilder},
 };
 
 mod cell;
@@ -15,7 +15,9 @@ async fn main() {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Test")
-        .with_inner_size(PhysicalSize::<u32>::new(1280, 720))
+        .with_position(PhysicalPosition::<u32>::new(0, 0))
+        .with_inner_size(PhysicalSize::<u32>::new(1920, 1080))
+        .with_fullscreen(Some(Fullscreen::Borderless(None)))
         .build(&event_loop)
         .unwrap();
 
