@@ -6,7 +6,7 @@ pub struct Cell {
 impl Cell {
     pub fn model_matrix(&self, size: f32) -> [[f32; 4]; 4] {
         glam::Mat4::from_scale_rotation_translation(
-            glam::vec3(size, size, 1.0),
+            glam::vec3(size - 2.0, size - 2.0, 1.0),
             glam::Quat::IDENTITY,
             glam::vec3(self.position.x, self.position.y, 0.0),
         )
