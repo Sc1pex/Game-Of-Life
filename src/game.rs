@@ -15,7 +15,6 @@ pub struct Game {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
 
-    cells: Vec<Cell>,
     cell_size: u32,
     num_cells_x: u32,
     num_cells_y: u32,
@@ -36,7 +35,7 @@ pub struct Game {
     render_pipeline: wgpu::RenderPipeline,
 
     mouse_pos: glam::Vec2,
-    is_mouse_button_pressed: bool,
+    mouse_clicked: bool,
     drawing: bool,
 
     time_between_generations: f32,
@@ -101,10 +100,7 @@ impl Game {
             contents: bytemuck::cast_slice(&model_matricies_data),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let state_data = cells
-            .iter()
-            .map(|cell| cell.state as u32)
-            .collect::<Vec<_>>();
+        let state_data = cells.iter().map(|_| 0).collect::<Vec<_>>();
         let state_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(&state_data),
@@ -199,7 +195,6 @@ impl Game {
             config,
             size,
 
-            cells,
             num_cells_x,
             num_cells_y,
             cell_size,
@@ -220,7 +215,7 @@ impl Game {
             current_state_data: state_data,
 
             mouse_pos: glam::vec2(0.0, 0.0),
-            is_mouse_button_pressed: false,
+            mouse_clicked: false,
             drawing: true,
             time_between_generations: 0.2,
             last_update_time: std::time::Instant::now(),
@@ -244,13 +239,10 @@ impl Game {
                 self.update();
             }
             WindowEvent::MouseInput {
-                state,
+                state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
-            } => match state {
-                ElementState::Pressed => self.is_mouse_button_pressed = true,
-                ElementState::Released => self.is_mouse_button_pressed = false,
-            },
+            } => self.mouse_clicked = true,
 
             WindowEvent::KeyboardInput {
                 input:
@@ -270,8 +262,8 @@ impl Game {
                     },
                 ..
             } => {
-                if self.time_between_generations - 0.05 >= 0.0 {
-                    self.time_between_generations -= 0.05
+                if self.time_between_generations - 0.02 >= 0.0 {
+                    self.time_between_generations -= 0.02
                 }
             }
 
@@ -283,7 +275,7 @@ impl Game {
                         ..
                     },
                 ..
-            } => self.time_between_generations += 0.05,
+            } => self.time_between_generations += 0.02,
 
             _ => {}
         }
@@ -294,23 +286,11 @@ impl Game {
             let cell_x = self.mouse_pos.x as u32 / self.cell_size;
             let cell_y = self.mouse_pos.y as u32 / self.cell_size;
             let cell_index = self.position_to_index(cell_x as i32, cell_y as i32);
-            if self.is_mouse_button_pressed {
-                self.cells[cell_index as usize].state =
-                    (1 - self.cells[cell_index as usize].state as u32) == 1;
+            if self.mouse_clicked {
+                self.current_state_data[cell_index] =
+                    1 - self.current_state_data[cell_index].min(1);
+                self.mouse_clicked = false;
             }
-
-            self.current_state_data = self
-                .cells
-                .iter()
-                .enumerate()
-                .map(|(index, cell)| {
-                    if index == cell_index as usize {
-                        cell.state as u32 + 2
-                    } else {
-                        cell.state as u32
-                    }
-                })
-                .collect::<Vec<_>>();
         } else {
             let now = std::time::Instant::now();
             let elapsed = now.duration_since(self.last_update_time).as_secs_f32();
@@ -323,11 +303,10 @@ impl Game {
                             neighbours += self.current_state_data[self.position_to_index(
                                 x as i32 + self.dx[index],
                                 y as i32 + self.dy[index],
-                            )
-                                as usize]
-                                .min(1);
+                            )]
+                            .min(1);
                         });
-                        let index = self.position_to_index(x as i32, y as i32) as usize;
+                        let index = self.position_to_index(x as i32, y as i32);
                         if self.current_state_data[index] > 0 {
                             if neighbours == 2 || neighbours == 3 {
                                 self.next_state_data[index] = 1;
@@ -384,7 +363,7 @@ impl Game {
             render_pass.set_vertex_buffer(1, self.model_mats_buffer.slice(..));
             render_pass.set_vertex_buffer(2, self.state_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..6, 0, 0..self.cells.len() as u32);
+            render_pass.draw_indexed(0..6, 0, 0..(self.num_cells_x * self.num_cells_y));
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -404,7 +383,7 @@ impl Game {
         (num_cells_y.ceil() as u32, cell_size.ceil() as u32)
     }
 
-    fn position_to_index(&self, mut x: i32, mut y: i32) -> u32 {
+    fn position_to_index(&self, mut x: i32, mut y: i32) -> usize {
         if x < 0 {
             x = (self.num_cells_x - 1) as i32;
         } else if x >= self.num_cells_x as i32 {
@@ -415,6 +394,6 @@ impl Game {
         } else if y >= self.num_cells_y as i32 {
             y = 0;
         }
-        (y * self.num_cells_x as i32 + x) as u32
+        (y * self.num_cells_x as i32 + x) as usize
     }
 }

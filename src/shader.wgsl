@@ -38,14 +38,6 @@ fn vs_main(
 
 [[stage(fragment)]]
 fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
-    var color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    var mult: f32 = 1.0;
-    if ((in.state & 1u) > 0u) {
-        color = color + vec4<f32>(1.0, 1.0, 1.0, 1.0);
-        mult = -1.0;
-    }
-    if ((in.state & 2u) > 0u) {
-        color = color + vec4<f32>(0.1, 0.1, 0.1, 1.0) * mult;
-    } 
-    return color;
+    let state = f32(in.state);
+    return vec4<f32>(state, state, state, 1.0);
 }
