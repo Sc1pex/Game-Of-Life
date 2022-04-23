@@ -9,7 +9,7 @@ struct ModelMatInput {
 
 struct VertexOutput {
     [[builtin(position)]] position: vec4<f32>;
-    [[location(0)]] state: f32;
+    [[location(0)]] state: u32;
 };
 
 struct PVMat {
@@ -21,7 +21,7 @@ var<uniform> pv_mat: PVMat;
 [[stage(vertex)]]
 fn vs_main(
     [[location(0)]] position: vec2<f32>,
-    [[location(1)]] state: f32,
+    [[location(1)]] state: u32,
     instance: ModelMatInput,
 ) -> VertexOutput {
     let model_matrix = mat4x4<f32>(
@@ -38,8 +38,14 @@ fn vs_main(
 
 [[stage(fragment)]]
 fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
-    if (in.state > 0.0) {
-        return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    var color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    var mult: f32 = 1.0;
+    if ((in.state & 1u) > 0u) {
+        color = color + vec4<f32>(1.0, 1.0, 1.0, 1.0);
+        mult = -1.0;
     }
-    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if ((in.state & 2u) > 0u) {
+        color = color + vec4<f32>(0.1, 0.1, 0.1, 1.0) * mult;
+    } 
+    return color;
 }

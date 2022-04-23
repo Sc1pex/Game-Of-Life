@@ -34,7 +34,7 @@ impl Cell {
         }
     }
 
-    const STATE_ATTRIBS: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![1 => Float32];
+    const STATE_ATTRIBS: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![1 => Uint32];
 
     pub fn state_desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {

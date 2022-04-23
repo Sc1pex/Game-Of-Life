@@ -1,7 +1,10 @@
 use std::borrow::Cow;
 
 use wgpu::util::DeviceExt;
-use winit::{event::WindowEvent, window::Window};
+use winit::{
+    event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
+    window::Window,
+};
 
 use crate::cell::Cell;
 
@@ -16,6 +19,8 @@ pub struct Game {
     cell_size: u32,
     num_cells_x: u32,
     num_cells_y: u32,
+    dx: Vec<i32>,
+    dy: Vec<i32>,
 
     pv_mat: glam::Mat4,
     pv_mat_bind_group: wgpu::BindGroup,
@@ -25,7 +30,17 @@ pub struct Game {
     state_buffer: wgpu::Buffer,
     model_mats_buffer: wgpu::Buffer,
 
+    current_state_data: Vec<u32>,
+    next_state_data: Vec<u32>,
+
     render_pipeline: wgpu::RenderPipeline,
+
+    mouse_pos: glam::Vec2,
+    is_mouse_button_pressed: bool,
+    drawing: bool,
+
+    time_between_generations: f32,
+    last_update_time: std::time::Instant,
 }
 
 impl Game {
@@ -67,17 +82,12 @@ impl Game {
 
         let num_cells_x = 80;
         let (num_cells_y, cell_size) = Self::calculate_cells(num_cells_x, &size);
-        let mut count = 0;
         let cells = (0..num_cells_y)
             .into_iter()
             .flat_map(|y| {
-                count += 1;
-                (0..num_cells_x).into_iter().map(move |x| {
-                    count += 1;
-                    Cell {
-                        position: glam::vec2((x * cell_size) as f32, (y * cell_size) as f32),
-                        state: (count % 2) == 1,
-                    }
+                (0..num_cells_x).into_iter().map(move |x| Cell {
+                    position: glam::vec2((x * cell_size) as f32, (y * cell_size) as f32),
+                    state: false,
                 })
             })
             .collect::<Vec<_>>();
@@ -93,12 +103,12 @@ impl Game {
         });
         let state_data = cells
             .iter()
-            .map(|cell| cell.state as u32 as f32)
+            .map(|cell| cell.state as u32)
             .collect::<Vec<_>>();
         let state_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(&state_data),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let pv_mat = glam::Mat4::orthographic_rh(
@@ -193,6 +203,8 @@ impl Game {
             num_cells_x,
             num_cells_y,
             cell_size,
+            dx: vec![-1, -1, -1, 0, 0, 1, 1, 1],
+            dy: vec![-1, 0, 1, -1, 1, -1, 0, 1],
 
             pv_mat,
             pv_mat_bind_group,
@@ -203,6 +215,15 @@ impl Game {
             model_mats_buffer,
 
             render_pipeline,
+
+            next_state_data: vec![0; state_data.len()],
+            current_state_data: state_data,
+
+            mouse_pos: glam::vec2(0.0, 0.0),
+            is_mouse_button_pressed: false,
+            drawing: true,
+            time_between_generations: 0.2,
+            last_update_time: std::time::Instant::now(),
         }
     }
 
@@ -216,11 +237,120 @@ impl Game {
                 self.size = **new_inner_size;
                 self.resize();
             }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                // println!("Mouse move");
+                self.mouse_pos = glam::vec2(position.x as f32, position.y as f32);
+                self.update();
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => match state {
+                ElementState::Pressed => self.is_mouse_button_pressed = true,
+                ElementState::Released => self.is_mouse_button_pressed = false,
+            },
+
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: ElementState::Pressed,
+                        virtual_keycode: Some(VirtualKeyCode::Space),
+                        ..
+                    },
+                ..
+            } => self.drawing = !self.drawing,
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: ElementState::Pressed,
+                        virtual_keycode: Some(VirtualKeyCode::Plus),
+                        ..
+                    },
+                ..
+            } => self.time_between_generations -= 0.05,
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: ElementState::Pressed,
+                        virtual_keycode: Some(VirtualKeyCode::Minus),
+                        ..
+                    },
+                ..
+            } => self.time_between_generations += 0.05,
+
             _ => {}
         }
     }
 
-    pub fn update(&mut self) {}
+    pub fn update(&mut self) {
+        if self.drawing {
+            let cell_x = self.mouse_pos.x as u32 / self.cell_size;
+            let cell_y = self.mouse_pos.y as u32 / self.cell_size;
+            if let Some(cell_index) = self.position_to_index(cell_x as i32, cell_y as i32) {
+                if self.is_mouse_button_pressed {
+                    self.cells[cell_index as usize].state =
+                        (1 - self.cells[cell_index as usize].state as u32) == 1;
+                }
+
+                self.current_state_data = self
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .map(|(index, cell)| {
+                        if index == cell_index as usize {
+                            cell.state as u32 + 2
+                        } else {
+                            cell.state as u32
+                        }
+                    })
+                    .collect::<Vec<_>>();
+            }
+        } else {
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(self.last_update_time).as_secs_f32();
+            if elapsed >= self.time_between_generations {
+                println!("Updating cells!");
+                (0..self.num_cells_y).into_iter().for_each(|y| {
+                    (0..self.num_cells_x).into_iter().for_each(|x| {
+                        let mut neighbours = 0;
+                        (0..self.dx.len()).into_iter().for_each(|index| {
+                            if let Some(index) = self.position_to_index(
+                                x as i32 + self.dx[index],
+                                y as i32 + self.dy[index],
+                            ) {
+                                neighbours += self.current_state_data[index as usize].min(1);
+                            }
+                        });
+                        let index = self.position_to_index(x as i32, y as i32).unwrap() as usize;
+                        if self.current_state_data[index] > 0 {
+                            if neighbours == 2 || neighbours == 3 {
+                                self.next_state_data[index] = 1;
+                            } else {
+                                self.next_state_data[index] = 0;
+                            }
+                        } else {
+                            if neighbours == 3 {
+                                self.next_state_data[index] = 1;
+                            } else {
+                                self.next_state_data[index] = 0;
+                            }
+                        }
+                    })
+                });
+
+                std::mem::swap(&mut self.current_state_data, &mut self.next_state_data);
+                self.last_update_time = now;
+            }
+        }
+
+        self.queue.write_buffer(
+            &self.state_buffer,
+            0,
+            bytemuck::cast_slice(&self.current_state_data),
+        );
+    }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
@@ -268,5 +398,13 @@ impl Game {
         let cell_size = size.width as f32 / num_cells_x as f32;
         let num_cells_y = size.height as f32 / cell_size;
         (num_cells_y.ceil() as u32, cell_size.ceil() as u32)
+    }
+
+    fn position_to_index(&self, x: i32, y: i32) -> Option<u32> {
+        if x < 0 || x >= self.num_cells_x as i32 || y < 0 || y >= self.num_cells_y as i32 {
+            None
+        } else {
+            Some((y * self.num_cells_x as i32 + x) as u32)
+        }
     }
 }

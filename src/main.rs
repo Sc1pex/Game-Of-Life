@@ -16,8 +16,8 @@ async fn main() {
     let window = WindowBuilder::new()
         .with_title("Test")
         .with_position(PhysicalPosition::<u32>::new(0, 0))
-        .with_inner_size(PhysicalSize::<u32>::new(1920, 1080))
-        .with_fullscreen(Some(Fullscreen::Borderless(None)))
+        .with_inner_size(PhysicalSize::<u32>::new(1280, 720))
+        // .with_fullscreen(Some(Fullscreen::Borderless(None)))
         .build(&event_loop)
         .unwrap();
 
@@ -38,7 +38,7 @@ async fn main() {
                 }
             }
 
-            Event::RedrawRequested(window_id) if window_id == window.id() => {
+            Event::MainEventsCleared => {
                 game.update();
                 match game.render() {
                     Ok(_) => {}
@@ -46,9 +46,8 @@ async fn main() {
                     Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
                     Err(e) => eprintln!("{:?}", e),
                 }
+                window.request_redraw()
             }
-
-            Event::MainEventsCleared => window.request_redraw(),
 
             _ => {}
         }
