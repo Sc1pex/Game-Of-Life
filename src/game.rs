@@ -269,7 +269,12 @@ impl Game {
                         ..
                     },
                 ..
-            } => self.time_between_generations -= 0.05,
+            } => {
+                if self.time_between_generations - 0.05 >= 0.0 {
+                    self.time_between_generations -= 0.05
+                }
+            }
+
             WindowEvent::KeyboardInput {
                 input:
                     KeyboardInput {
@@ -288,42 +293,41 @@ impl Game {
         if self.drawing {
             let cell_x = self.mouse_pos.x as u32 / self.cell_size;
             let cell_y = self.mouse_pos.y as u32 / self.cell_size;
-            if let Some(cell_index) = self.position_to_index(cell_x as i32, cell_y as i32) {
-                if self.is_mouse_button_pressed {
-                    self.cells[cell_index as usize].state =
-                        (1 - self.cells[cell_index as usize].state as u32) == 1;
-                }
-
-                self.current_state_data = self
-                    .cells
-                    .iter()
-                    .enumerate()
-                    .map(|(index, cell)| {
-                        if index == cell_index as usize {
-                            cell.state as u32 + 2
-                        } else {
-                            cell.state as u32
-                        }
-                    })
-                    .collect::<Vec<_>>();
+            let cell_index = self.position_to_index(cell_x as i32, cell_y as i32);
+            if self.is_mouse_button_pressed {
+                self.cells[cell_index as usize].state =
+                    (1 - self.cells[cell_index as usize].state as u32) == 1;
             }
+
+            self.current_state_data = self
+                .cells
+                .iter()
+                .enumerate()
+                .map(|(index, cell)| {
+                    if index == cell_index as usize {
+                        cell.state as u32 + 2
+                    } else {
+                        cell.state as u32
+                    }
+                })
+                .collect::<Vec<_>>();
         } else {
             let now = std::time::Instant::now();
             let elapsed = now.duration_since(self.last_update_time).as_secs_f32();
             if elapsed >= self.time_between_generations {
-                println!("Updating cells!");
+                println!("{}", self.time_between_generations);
                 (0..self.num_cells_y).into_iter().for_each(|y| {
                     (0..self.num_cells_x).into_iter().for_each(|x| {
                         let mut neighbours = 0;
                         (0..self.dx.len()).into_iter().for_each(|index| {
-                            if let Some(index) = self.position_to_index(
+                            neighbours += self.current_state_data[self.position_to_index(
                                 x as i32 + self.dx[index],
                                 y as i32 + self.dy[index],
-                            ) {
-                                neighbours += self.current_state_data[index as usize].min(1);
-                            }
+                            )
+                                as usize]
+                                .min(1);
                         });
-                        let index = self.position_to_index(x as i32, y as i32).unwrap() as usize;
+                        let index = self.position_to_index(x as i32, y as i32) as usize;
                         if self.current_state_data[index] > 0 {
                             if neighbours == 2 || neighbours == 3 {
                                 self.next_state_data[index] = 1;
@@ -400,11 +404,17 @@ impl Game {
         (num_cells_y.ceil() as u32, cell_size.ceil() as u32)
     }
 
-    fn position_to_index(&self, x: i32, y: i32) -> Option<u32> {
-        if x < 0 || x >= self.num_cells_x as i32 || y < 0 || y >= self.num_cells_y as i32 {
-            None
-        } else {
-            Some((y * self.num_cells_x as i32 + x) as u32)
+    fn position_to_index(&self, mut x: i32, mut y: i32) -> u32 {
+        if x < 0 {
+            x = (self.num_cells_x - 1) as i32;
+        } else if x >= self.num_cells_x as i32 {
+            x = 0;
         }
+        if y < 0 {
+            y = (self.num_cells_y - 1) as i32;
+        } else if y >= self.num_cells_y as i32 {
+            y = 0;
+        }
+        (y * self.num_cells_x as i32 + x) as u32
     }
 }
