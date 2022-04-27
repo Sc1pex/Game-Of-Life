@@ -264,7 +264,7 @@ impl Game {
                     },
                 ..
             } => {
-                if self.time_between_generations - 0.02 >= 0.0 {
+                if self.time_between_generations - 0.03 >= 0.0 {
                     self.time_between_generations -= 0.02
                 }
             }
@@ -294,8 +294,7 @@ impl Game {
         if self.updating {
             let now = std::time::Instant::now();
             let elapsed = now.duration_since(self.last_update_time).as_secs_f32();
-            if elapsed >= self.time_between_generations {
-                // println!("{}", self.time_between_generations);
+            if elapsed >= self.time_between_generations || self.time_between_generations <= 0.002 {
                 (0..self.num_cells_y).into_iter().for_each(|y| {
                     (0..self.num_cells_x).into_iter().for_each(|x| {
                         let mut neighbours = 0;
@@ -386,14 +385,6 @@ impl Game {
         self.recalculate_model_matricies();
         self.resize_state_buffer();
         self.recalculate_proj_matrix();
-        println!(
-            "New resolution: {} {}, num cells: {}, {}, cell size: {}",
-            self.config.width,
-            self.config.height,
-            self.num_cells_x,
-            self.num_cells_y,
-            self.cell_size
-        );
     }
 
     fn calculate_cells(num_cells_x: u32, size: &winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
