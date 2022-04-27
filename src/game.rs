@@ -22,6 +22,7 @@ pub struct Game {
     dy: Vec<i32>,
 
     pv_mat: glam::Mat4,
+    pv_mat_buffer: wgpu::Buffer,
     pv_mat_bind_group: wgpu::BindGroup,
 
     vertex_buffer: wgpu::Buffer,
@@ -36,7 +37,7 @@ pub struct Game {
 
     mouse_pos: glam::Vec2,
     mouse_clicked: bool,
-    drawing: bool,
+    updating: bool,
 
     time_between_generations: f32,
     last_update_time: std::time::Instant,
@@ -202,6 +203,7 @@ impl Game {
             dy: vec![-1, 0, 1, -1, 1, -1, 0, 1],
 
             pv_mat,
+            pv_mat_buffer,
             pv_mat_bind_group,
 
             vertex_buffer,
@@ -216,7 +218,7 @@ impl Game {
 
             mouse_pos: glam::vec2(0.0, 0.0),
             mouse_clicked: false,
-            drawing: true,
+            updating: false,
             time_between_generations: 0.2,
             last_update_time: std::time::Instant::now(),
         }
@@ -252,7 +254,7 @@ impl Game {
                         ..
                     },
                 ..
-            } => self.drawing = !self.drawing,
+            } => self.updating = !self.updating,
             WindowEvent::KeyboardInput {
                 input:
                     KeyboardInput {
@@ -282,20 +284,18 @@ impl Game {
     }
 
     pub fn update(&mut self) {
-        if self.drawing {
-            let cell_x = self.mouse_pos.x as u32 / self.cell_size;
-            let cell_y = self.mouse_pos.y as u32 / self.cell_size;
-            let cell_index = self.position_to_index(cell_x as i32, cell_y as i32);
-            if self.mouse_clicked {
-                self.current_state_data[cell_index] =
-                    1 - self.current_state_data[cell_index].min(1);
-                self.mouse_clicked = false;
-            }
-        } else {
+        let cell_x = self.mouse_pos.x as u32 / self.cell_size;
+        let cell_y = self.mouse_pos.y as u32 / self.cell_size;
+        let cell_index = self.position_to_index(cell_x as i32, cell_y as i32);
+        if self.mouse_clicked {
+            self.current_state_data[cell_index] = 1 - self.current_state_data[cell_index].min(1);
+            self.mouse_clicked = false;
+        }
+        if self.updating {
             let now = std::time::Instant::now();
             let elapsed = now.duration_since(self.last_update_time).as_secs_f32();
             if elapsed >= self.time_between_generations {
-                println!("{}", self.time_between_generations);
+                // println!("{}", self.time_between_generations);
                 (0..self.num_cells_y).into_iter().for_each(|y| {
                     (0..self.num_cells_x).into_iter().for_each(|x| {
                         let mut neighbours = 0;
@@ -380,12 +380,87 @@ impl Game {
         self.config.width = self.size.width;
         self.config.height = self.size.height;
         self.surface.configure(&self.device, &self.config);
+
+        self.num_cells_x = (self.config.width as f32 / self.cell_size as f32).ceil() as u32;
+        self.num_cells_y = (self.config.height as f32 / self.cell_size as f32).ceil() as u32;
+        self.recalculate_model_matricies();
+        self.resize_state_buffer();
+        self.recalculate_proj_matrix();
+        println!(
+            "New resolution: {} {}, num cells: {}, {}, cell size: {}",
+            self.config.width,
+            self.config.height,
+            self.num_cells_x,
+            self.num_cells_y,
+            self.cell_size
+        );
     }
 
     fn calculate_cells(num_cells_x: u32, size: &winit::dpi::PhysicalSize<u32>) -> (u32, u32) {
         let cell_size = size.width as f32 / num_cells_x as f32;
         let num_cells_y = size.height as f32 / cell_size;
         (num_cells_y.ceil() as u32, cell_size.ceil() as u32)
+    }
+
+    fn resize_state_buffer(&mut self) {
+        self.state_buffer.destroy();
+        let state_data: Vec<u32> = vec![0; (self.num_cells_x * self.num_cells_y) as usize];
+        self.state_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&state_data),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+
+        self.current_state_data
+            .resize((self.num_cells_x * self.num_cells_y) as usize, 0);
+        self.next_state_data
+            .resize((self.num_cells_x * self.num_cells_y) as usize, 0);
+    }
+
+    fn recalculate_model_matricies(&mut self) {
+        let cell_size = self.cell_size;
+        let cells = (0..self.num_cells_y)
+            .into_iter()
+            .flat_map(|y| {
+                (0..self.num_cells_x).into_iter().map(move |x| {
+                    // println!("{}, {}", x * cell_size, y * cell_size);
+                    Cell {
+                        position: glam::vec2((x * cell_size) as f32, (y * cell_size) as f32),
+                        state: false,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let model_matricies_data = cells
+            .iter()
+            .map(|cell| cell.model_matrix(self.cell_size as f32))
+            .collect::<Vec<_>>();
+        self.model_mats_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&model_matricies_data),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+    }
+
+    fn recalculate_proj_matrix(&mut self) {
+        self.pv_mat = glam::Mat4::orthographic_rh(
+            0.0,
+            self.size.width as f32,
+            self.size.height as f32,
+            0.0,
+            0.0,
+            100.0,
+        );
+        self.queue.write_buffer(
+            &self.pv_mat_buffer,
+            0,
+            bytemuck::cast_slice(&(self.pv_mat.to_cols_array_2d())),
+        );
     }
 
     fn position_to_index(&self, mut x: i32, mut y: i32) -> usize {
